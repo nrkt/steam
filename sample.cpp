@@ -42,9 +42,12 @@ int64_t delete_type = 3;
 
 int64_t read(int64_t key)
 {
+    std::cout << "[read] " << "key:" << key << std::endl;
+
     // read data from data lists
     TransactionRecord* find_version = data[key];
     if (find_version == nullptr) {
+        std::cout << "[read] key(" << key << ") is not exist." << std::endl;
         return 0;
     }
     else {
@@ -58,7 +61,7 @@ void update(int64_t key, int64_t value)
     std::cout << "[update] " << "key:" << key << ", value:" << value << std::endl;
     
     if (data[key] == nullptr) {
-        std::cout << "key(" << key << ") is not exist." << std::endl;
+        std::cout << "[update] key(" << key << ") is not exist." << std::endl;
         return;
     }
     
@@ -120,7 +123,6 @@ void test_insert_and_update() {
 
 // foreground garbage collection
 // refer 4.3 Eager Prunning of Obsolute Versions
-
 void steam(int64_t key) {
     // active transaction's copy
 //     std::vector<time_t> temp(active_transactions.size());
@@ -144,10 +146,12 @@ int main()
     // std::thread t1(update, 1, 2);
     std::thread t2(insert, 2, 3);
     std::thread t3(update, 1, 4);
+    std::thread t4(read, 1);
 
     t1.join();
     t2.join();
     t3.join();
+    t4.join();
 
     // std::cout << data[1].value << std::endl;
     // std::cout << data[1].version_record->GetNextPtr()->GetValue() << std::endl;
