@@ -13,7 +13,6 @@ private:
     int64_t Value;
     int64_t RelationId;
 
-    std::atomic<TransactionRecord*> NextPtr;
     int64_t TupleId;
     int64_t NumTuples;
     int64_t AttributeMask; // use for update
@@ -25,21 +24,14 @@ public:
     TransactionRecord(){};
     ~TransactionRecord(){};
     
-    void SetNextPtr(TransactionRecord* next_ptr) {NextPtr = next_ptr;};
     void SetValue(int64_t value) {Value = value;};
     int64_t GetType() {return Type;};
     int64_t GetValue() {return Value;};
-    TransactionRecord* GetNextPtr() {return NextPtr;};
+
+    std::atomic<TransactionRecord*> NextPtr;
 };
 
-struct Record
-{
-    int64_t value;
-    TransactionRecord* version_record;
-};
-
-
-static std::map<int64_t, Record> data;
+static std::map<int64_t, std::atomic<TransactionRecord*>> data;
 static std::vector<time_t> active_transactions; // manage active transaction's start timestamps;
 
 
@@ -51,9 +43,9 @@ int64_t delete_type = 3;
 int64_t read(int64_t key)
 {
     // read data from data lists
-    TransactionRecord* find_version = data[key].version_record;
+    TransactionRecord* find_version = data[key];
     if (find_version == nullptr) {
-        return NULL;
+        return 0;
     }
     else {
         return find_version->GetValue();
@@ -64,15 +56,20 @@ int64_t read(int64_t key)
 void update(int64_t key, int64_t value)
 {
     std::cout << "[update] " << "key:" << key << ", value:" << value << std::endl;
+    
+    if (data[key] == nullptr) {
+        std::cout << "key(" << key << ") is not exist." << std::endl;
+        return;
+    }
+    
+    TransactionRecord* new_head = new TransactionRecord(update_type);
+    new_head->SetValue(value);
 
-    // append transaction record
-    TransactionRecord* tr = new TransactionRecord(update_type);
-    tr->SetNextPtr(data[key].version_record);
-    tr->SetValue(value);
-
-    // update data[key]
-    Record r = {value, tr};
-    data[key] = r;
+    // new transaction record is version record's head
+    TransactionRecord* old_head;
+    do {
+        new_head->NextPtr = old_head = data[key];
+    }while (!data[key].compare_exchange_weak(old_head, new_head));
     
     // TODO: GC(foreground)
 
@@ -84,14 +81,14 @@ void insert(int64_t key, int64_t value)
     std::cout << "[insert] " << "key:" << key << ", value:" << value << std::endl;
 
     // append transaction lists(thread_local)
-    TransactionRecord* tr = new TransactionRecord(insert_type);
-    
-    tr->SetNextPtr(nullptr);
-    tr->SetValue(value);
+    TransactionRecord* new_head = new TransactionRecord(insert_type);
+    new_head->NextPtr = nullptr;
+    new_head->SetValue(value);
 
-    // insert data
-    data[key] = Record{value, tr};
-
+    TransactionRecord* tmp = nullptr;
+    if (!data[key].compare_exchange_weak(tmp, new_head)) {
+        std::cout << "key(" << key << ") is already exist." << std::endl;
+    }
     return;
 };
 
@@ -110,8 +107,8 @@ void test_insert_and_update() {
     insert(key, first_value);
     update(key, second_value);
     
-    TransactionRecord* cur_record = data[key].version_record;
-    TransactionRecord* pre_record = data[key].version_record->GetNextPtr();
+    TransactionRecord* cur_record = data[key];
+    TransactionRecord* pre_record = cur_record->NextPtr;
 
     assert(cur_record->GetValue() == second_value);
     assert(pre_record->GetValue() == first_value);
